@@ -1,0 +1,7 @@
+# Claude Code writes approved permissions here when you work in this repo
+.claude/settings.local.json
+
+# nix build output and direnv cache, once a flake is added
+result
+result-*
+.direnv/
