@@ -7,7 +7,7 @@ use utf8;
 use File::Basename qw(basename dirname);
 use FindBin;
 use lib "$FindBin::RealBin/lib";
-use Lint qw(read_input strip_code prose_hits block);
+use Lint qw(read_input prose_hits structure_hits comment_text block);
 
 my ($raw, $decode) = read_input();
 my $in   = $decode->();
@@ -97,20 +97,34 @@ if (my $fmt = formatter()) {
     waitpid $pid, 0;
 }
 
-# Prose lint: only the text this edit added, only in prose files, never in instruction files.
-exit 0 unless $file =~ /\.(?:md|mdx|markdown|txt|rst|adoc)$/i;
-exit 0 if basename($file) =~ /^(?:AGENTS|CLAUDE|GEMINI|SKILL)\.md$/i;
+# Prose lint: every text a reader meets, including the comments inside source files.
+# The instruction files are exempt because they quote the tells they ban; any other file
+# opts out with a "prose-lint: off" comment.
+my $base = basename($file);
+exit 0 if $base =~ /^(?:AGENTS|CLAUDE|GEMINI)\.md$/i;
 
-my $new = join "\n", grep { defined } $ti->{content}, $ti->{new_string},
-    map { $_->{new_string} } @{ $ti->{edits} // [] };
-exit 0 unless length $new;
-
-# Codebase wins: skip the dash check when the rest of the file already uses dashes.
 my $whole = do { open my $fh, '<:utf8', $file or exit 0; local $/; <$fh> // '' };
-my $dashes_in = sub { my $n = () = strip_code(shift) =~ /[—–]/g; $n };
-my $check_dashes = $dashes_in->($whole) <= $dashes_in->($new);
+exit 0 if $whole =~ /prose-lint:\s*off/;
 
-my @hits = prose_hits($new, $check_dashes);
+my $added = join "\n", grep { defined } $ti->{content}, $ti->{new_string},
+    map { $_->{new_string} } @{ $ti->{edits} // [] };
+exit 0 unless length $added;
+
+# Outside a prose file only the comments are read, and the closer and bold-bullet budgets
+# are dropped: a one-line comment is a short standalone sentence by design.
+my %opt;
+unless ($file =~ /\.(?:md|mdx|markdown|txt|rst|adoc)$/i) {
+    my $comments = comment_text($file, $whole);
+    exit 0 unless defined $comments;
+    $whole = $comments;
+    $added = comment_text($file, $added) // '';
+    %opt   = (no_closers => 1, no_bold => 1);
+}
+exit 0 unless $added =~ /\S/;
+
+# Vocabulary tells fire on one sighting in what this edit added; structural tells are a
+# rate over the whole file, raised only where the edit fed them.
+my @hits = (prose_hits($added, 0), structure_hits($whole, $added, %opt));
 block("prose-lint $file", 'AI-writing tells: ' . join(', ', @hits),
       'Rewrite those sentences per the Writing rules in AGENTS.md.') if @hits;
 exit 0;

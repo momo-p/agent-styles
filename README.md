@@ -34,7 +34,9 @@ Before each Bash call, `guard-bash.pl` blocks:
 
 Staging itself is never checked, so incremental `git add` calls stay silent. The index is checked once, at the commit, and running `git status` or `git diff --cached` marks it as reviewed. That state is a fingerprint of the index in `~/.cache/style-agents/`, one file per repo and session.
 
-After each file edit, `post-edit.pl` formats the file and lints any prose the edit added. `gofmt`, `rustfmt`, and `zig fmt` always run. Prettier, ruff, black, alejandra, nixfmt, stylua, clang-format, and treefmt run only when the project has a config for them, so a repo that doesn't use a formatter won't get reformatted. The prose lint checks `.md`, `.txt`, `.rst`, and `.adoc` files, skips code blocks, and leaves instruction files like `AGENTS.md` alone.
+After each file edit, `post-edit.pl` formats the file and lints its prose. `gofmt`, `rustfmt`, and `zig fmt` always run. Prettier, ruff, black, alejandra, nixfmt, stylua, clang-format, and treefmt run only when the project has a config for them, so a repo that doesn't use a formatter won't get reformatted.
+
+The prose lint reads `.md`, `.txt`, `.rst` and `.adoc` whole, plus the comments and doc comments of source files in the usual languages. Stock AI words fire on one sighting in the text the edit added. The structural tells (X-not-Y contrasts, one-line closers, three-item lists, em dashes, bold lead-in bullets) are counted over the whole file against a budget per line of prose, and raised only when the edit fed them, so a document can't drift past a budget one small edit at a time. Code blocks, tables, headings and quotes don't count toward anything. Comments get the word, contrast, list and dash budgets but not the closer one, since a one-line comment is a short standalone sentence by design. `AGENTS.md` and its siblings are skipped because they quote the tells they ban, and any other file opts out with a `prose-lint: off` comment.
 
 After a Bash call fails, `op-failure.pl` checks whether it was a git command that hit a signing error, an SSH key error, or a timeout. If so, it tells the agent to stop and ask you to unlock or approve 1Password, instead of retrying or deciding git is broken.
 
@@ -82,7 +84,7 @@ ln -s ~/Codes/style-agents/skills/humanizer ~/.claude/skills/humanizer
 
 The hooks will get things wrong, mostly by flagging text that was fine. The places to change:
 
-- word lists for the prose lint: `hooks/lib/Lint.pm`
+- word lists and structural budgets for the prose lint: `@HARD`, `@SOFT` and `%BUDGET` in `hooks/lib/Lint.pm`
 - 1Password and SSH error messages: `hooks/op-failure.pl`
 - which formatter runs for which file type: `formatter()` in `hooks/post-edit.pl`
 - permission rules: `settings.json`

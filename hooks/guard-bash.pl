@@ -5,7 +5,7 @@ use warnings;
 use utf8;
 use FindBin;
 use lib "$FindBin::RealBin/lib";
-use Lint qw(read_input prose_hits conventional attribution_hit block signs_with_1password ssh_via_1password
+use Lint qw(read_input prose_hits structure_hits conventional attribution_hit block signs_with_1password ssh_via_1password
             op_running risky_paths secret_hits gitleaks_staged have_cmd git_lines
             index_fingerprint review_file record_review last_review OP_STOP);
 
@@ -105,7 +105,7 @@ if ($cmd =~ /gh\s+pr\s+(?:create|edit)\b/) {
         push @problems, 'no code blocks' if $body =~ /^\s*```/m;
         my $bullets = () = $body =~ /^\s*[-*] /mg;
         push @problems, "$bullets bullets; max 5" if $bullets > 5;
-        my @hits = prose_hits($body, 1);
+        my @hits = (prose_hits($body, 1), structure_hits($body, undef, min_lines => 3));
         push @problems, 'AI-writing tells: ' . join(', ', @hits) if @hits;
         block('pr', 'Body breaks the PR rules in AGENTS.md:', @problems) if @problems;
     }

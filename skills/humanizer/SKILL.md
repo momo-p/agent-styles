@@ -10,6 +10,8 @@ metadata:
   version: "3.0.0"
 ---
 
+<!-- prose-lint: off, this file quotes the tells it bans -->
+
 # Humanizer: remove AI writing patterns
 
 Rewrite AI-sounding text so it reads like the writer, not a chatbot. Keep what it says. Do not make anything up.

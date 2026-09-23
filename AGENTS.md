@@ -160,18 +160,19 @@ A name is a contract promising exactly what the function does.
 ### Writing
 Applies to all text a person reads: replies, code comments, doc comments, commit messages, PR bodies, docs. Compact form of the `humanizer` skill.
 
-- State the point. No "not X but Y" contrasts, no staged openers ("Let's dive in", "Here's the thing", "Honestly?").
-- No closer that repeats the point, no dramatic fragments, no sayings that sound deep ("At its core…").
+- State the point. No "not X but Y" contrasts, no staged openers ("Let's dive in", "Here's the thing", "Honestly?"). Keep a contrast only when the negative half corrects a belief the reader holds: at most one per 40 lines of prose.
+- No closer that repeats the point, no dramatic fragments, no sayings that sound deep ("At its core…"). A short sentence ending a paragraph has to carry a new fact: at most one per 25 lines of prose.
 - Don't argue with objections or reject options nobody raised.
 - Use is/are/has, not "serves as", "stands as", "boasts". Name the relationship ("calls", "owns", "replaces"), not "is associated with".
 - No inflation or sales words: pivotal, crucial, seamless, enhance, leverage, showcase, underscore, delve, vibrant, testament, landscape, robust (figurative). Say the plain fact.
 - No "-ing" rider bolted on to sound deeper ("…, ensuring reliability"). No "experts say" or "best practice" in place of the actual reason.
 - Hedge once, and only when there is real doubt.
-- Three items only when there are three things. Vary sentence length and openings.
-- In prose, prefer periods, commas, colons, or parentheses over em dashes.
-- Bold only what the reader must not miss. Sentence-case headings; no emojis or arrows as decoration; don't restate a heading in the line under it.
+- Three items only when there are three things: at most one three-item list per 50 lines of prose. Vary sentence length and openings.
+- In prose, prefer periods, commas, colons, or parentheses over em dashes: at most one em or en dash per 80 lines.
+- Bold only what the reader must not miss, on under two bullets in five. Sentence-case headings; no emojis or arrows as decoration; don't restate a heading in the line under it.
 - No chat residue in files, comments, commits, or PRs ("Great question", "I hope this helps", "Let me know").
 - Comments and docs describe current behavior, not what it replaced ("previously…", "was changed to…"). History belongs in commits and changelogs.
+- These budgets are what `post-edit.pl` measures over the whole file, in Markdown and in the comments of source files alike, so a document that drifts past them blocks the next edit. A file that has to quote the tells it bans opts out with a `prose-lint: off` comment.
 - Longer prose for people (docs, READMEs, PR bodies)? Run the `humanizer` skill on the draft before finishing.
 
 ---

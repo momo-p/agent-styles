@@ -7,7 +7,7 @@ use Digest::SHA ();
 use File::Path qw(make_path);
 use JSON::PP ();
 use Exporter 'import';
-our @EXPORT_OK = qw(read_input strip_code prose_hits conventional attribution_hit block
+our @EXPORT_OK = qw(read_input strip_code prose_hits structure_hits prose_text comment_text conventional attribution_hit block
                     signs_with_1password ssh_via_1password op_running risky_paths secret_hits gitleaks_staged have_cmd git_lines
                     index_fingerprint review_file record_review last_review OP_STOP);
 
@@ -220,6 +220,142 @@ sub block {
     binmode STDERR, ':utf8';
     print STDERR "$prefix: ", join("\n  ", @lines), "\n";
     exit 2;
+}
+
+
+# Text a reader actually sees: fenced blocks, inline code, links, quotes, tables and
+# headings removed, line and paragraph structure kept so a closer can be found at the end
+# of its block. Inline code becomes \x01 so a terse line of API names is not read as prose.
+sub prose_text {
+    my ($text) = @_;
+    $text =~ s/^[ \t]*(```|~~~).*?^[ \t]*\1[^\n]*$/\n/gms;
+    $text =~ s/<!--.*?-->//gs;
+    $text =~ s/`[^`\n]*`/\x01/g;
+    $text =~ s{https?://\S+}{}g;
+    $text =~ s/\[([^\]\n]*)\]\([^)\n]*\)/$1/g;
+    $text =~ s/^[ \t]*[>|#][^\n]*$//mg;
+    return $text;
+}
+
+# Prose blocks: every bullet stands alone, consecutive plain lines join into a paragraph.
+sub _blocks {
+    my ($text) = @_;
+    my (@blocks, @cur);
+    my $flush = sub { push @blocks, join(' ', @cur) if @cur; @cur = () };
+    for my $line (split /\n/, $text) {
+        if    ($line !~ /\S/)                      { $flush->() }
+        elsif ($line =~ /^\s*(?:[-*+]|\d+[.)])\s/) { $flush->(); push @blocks, $line }
+        else                                       { push @cur, $line }
+    }
+    $flush->();
+    return grep { /\S/ } @blocks;
+}
+
+# Sentences of a block, with the bullet marker and any bold lead-in label dropped.
+sub _sentences {
+    my ($block) = @_;
+    $block =~ s/^\s*(?:[-*+]|\d+[.)])\s+//;
+    $block =~ s/^\*\*[^*\n]+\*\*:?\s*//;
+    return grep { /\S/ } split /(?<=[.!?])\s+/, $block;
+}
+
+# Short declarative sentences that close a block which already made its point, plus the
+# one-sentence paragraph dropped after a full one. Colons, digits and code spans rule a
+# sentence out: it is carrying detail rather than restating.
+sub _closers {
+    my ($text) = @_;
+    my ($n, $prev_full) = (0, 0);
+    for my $block (_blocks($text)) {
+        my @s = _sentences($block);
+        next unless @s;
+        my $last  = $s[-1];
+        my $words = () = $last =~ /\S+/g;
+        my $short = $last =~ /[.!?]\s*$/ && $last !~ /[\x01\d:;]/ && $words >= 3 && $words <= 9;
+        $n++ if $short && (@s > 1 || $prev_full);
+        $prev_full = @s > 1;
+    }
+    return $n;
+}
+
+# Raw counts of every structural tell, plus the prose volume they are judged against.
+sub _counts {
+    my ($text) = @_;
+    my $p = prose_text($text);
+    my %n;
+    $n{lines}   = () = $p =~ /^[^\n]*\S[^\n]*$/mg;
+    $n{$_}      = 0 for qw(antithesis triads dash closers bold bullets);
+    $n{antithesis} = () = $p =~ /,\s+not\s+\w|\b(?:is|are|was|were)\s+not\s+(?:a|an|the)\b|\brather than\b|,\s+never\s/gi;
+    # Only a run of exactly three counts; a genuine long enumeration is not a forced triad.
+    while ($p =~ /((?:[\w'-]+,\s+)+[\w'-]+,?\s+and\s+[\w'-]+)/g) {
+        my @items = grep { length } split /,\s*|\s+and\s+/, $1;
+        $n{triads}++ if @items == 3;
+    }
+    $n{dash}       = () = $p =~ /[\x{2014}\x{2013}]|\s--\s/g;
+    $n{closers}    = _closers($p);
+    $n{bullets}    = () = $p =~ /^\s*(?:[-*+]|\d+[.)])\s+/mg;
+    $n{bold}       = () = $p =~ /^\s*(?:[-*+]|\d+[.)])\s+\*\*[^*\n]+\*\*/mg;
+    return %n;
+}
+
+# How much of each tell a document may carry: [smallest count worth reporting, one per N
+# prose lines]. A single contrast is good technical writing; one in every paragraph is the
+# tic, so these fire on rate and scale with the document instead of on one sighting.
+my %BUDGET = (
+    antithesis => ['antithesis (X, not Y)', 3, 40],
+    closers    => ['one-line closers',      4, 25],
+    triads     => ['forced triads',         3, 50],
+    dash       => ['em/en dash',            2, 80],
+);
+
+# Structural tells in $whole, reported only where $added fed them, so untouched prose
+# stays quiet. %opt drops the checks a kind of text is exempt from (code comments are
+# short single sentences by design, so closers mean nothing there) and lowers min_lines
+# for text that is short by rule, such as a PR body capped at ten lines.
+sub structure_hits {
+    my ($whole, $added, %opt) = @_;
+    my %w = _counts($whole);
+    return () if $w{lines} < ($opt{min_lines} // 8);
+    my %a = defined $added ? _counts($added) : %w;
+
+    my @hits;
+    for my $key (sort keys %BUDGET) {
+        next if $opt{"no_$key"};
+        my ($name, $min, $per) = @{ $BUDGET{$key} };
+        next unless $a{$key} && $w{$key} >= $min && $w{$key} * $per > $w{lines};
+        push @hits, sprintf '%s x%d in %d lines, over the 1 per %d budget',
+            $name, $w{$key}, $w{lines}, $per;
+    }
+    push @hits, sprintf 'bold lead-in labels on %d of %d bullets', $w{bold}, $w{bullets}
+        if !$opt{no_bold} && $a{bold} && $w{bold} >= 5 && $w{bold} * 5 > $w{bullets} * 2;
+    return @hits;
+}
+
+# Which comment syntax a source file uses. Anything unlisted has no prose to lint.
+my %COMMENT = (
+    slash => qr/\.(?:c|h|cc|cpp|hpp|cxx|go|rs|java|[cm]?[jt]sx?|dart|swift|kts?|scala|zig|php|cs|proto|gradle|groovy)$/i,
+    hash  => qr/\.(?:py|pyi|rb|sh|bash|zsh|pl|pm|t|ya?ml|toml|nix|tf|just)$|(?:^|\/)(?:Makefile|Justfile|Dockerfile)[^\/]*$/,
+    dash  => qr/\.(?:lua|sql|hs|elm|moon)$/i,
+);
+
+# The comments and doc comments of a source file: the prose a reader meets inside code.
+# String bodies are blanked first so a URL or a quoted "#" never reads as a comment.
+sub comment_text {
+    my ($path, $text) = @_;
+    $text =~ s/(["'])(?:\\.|(?!\1)[^\n])*\1/""/g;
+    my @out;
+    if ($path =~ $COMMENT{slash}) {
+        push @out, $1 while $text =~ m{(?<![:\w/])/{2,3}[ \t]?([^\n]*)}g;
+        push @out, $1 while $text =~ m{/\*+(.*?)\*/}gs;
+    }
+    elsif ($path =~ $COMMENT{hash}) {
+        push @out, $1 while $text =~ /(?:^|\s)#+[ \t]?([^\n]*)/mg;
+        push @out, $1 while $text =~ /"""(.*?)"""/gs;
+    }
+    elsif ($path =~ $COMMENT{dash}) {
+        push @out, $1 while $text =~ /(?<![-\w])--[ \t]?([^\n]*)/g;
+    }
+    else { return }
+    return join "\n", grep { !/^!/ } @out;
 }
 
 1;
