@@ -26,8 +26,13 @@ Before each Bash call, `guard-bash.pl` blocks:
 - PR titles that aren't conventional, and PR bodies with more than 10 lines or 5 bullets, headings, or code blocks
 - AI-writing tells in commit subjects and PR bodies
 - any attempt to skip commit signing (`--no-gpg-sign`, `-c commit.gpgsign=false`, editing the signing config)
+- commits whose staged files look wrong by name (`.env`, keys, `node_modules/`, build output, databases) or are over 1 MB
+- commits whose staged diff contains a secret, scanned with [gitleaks](https://github.com/gitleaks/gitleaks) when installed, falling back to built-in patterns
+- commits where the index changed since the agent last ran `git status` or `git diff --cached`, so nothing is committed unseen
 - commits signed through 1Password (`op-ssh-sign`) while 1Password is closed
 - push, pull, fetch, and clone over SSH while 1Password is closed, when `~/.ssh/config` points `IdentityAgent` at 1Password (HTTPS remotes are left alone)
+
+Staging itself is never checked, so incremental `git add` calls stay silent. The index is checked once, at the commit, and running `git status` or `git diff --cached` marks it as reviewed. That state is a fingerprint of the index in `~/.cache/style-agents/`, one file per repo and session.
 
 After each file edit, `post-edit.pl` formats the file and lints any prose the edit added. `gofmt`, `rustfmt`, and `zig fmt` always run. Prettier, ruff, black, alejandra, nixfmt, stylua, clang-format, and treefmt run only when the project has a config for them, so a repo that doesn't use a formatter won't get reformatted. The prose lint checks `.md`, `.txt`, `.rst`, and `.adoc` files, skips code blocks, and leaves instruction files like `AGENTS.md` alone.
 
@@ -51,7 +56,7 @@ A fact can still go stale if it depends on a file it didn't cite. `AGENTS.md` te
 
 ## Install
 
-You need Claude Code 2.1.272 or later (for the `PostToolUseFailure` hook event), Perl 5 with its core modules, and git. Formatters are optional; the hooks skip any that aren't installed.
+You need Claude Code 2.1.272 or later (for the `PostToolUseFailure` hook event), Perl 5 with its core modules, and git. Formatters are optional; the hooks skip any that aren't installed. [gitleaks](https://github.com/gitleaks/gitleaks) is optional too, and worth installing: with it, the secret scan on commit knows real tokens from documented examples. Without it, the built-in patterns are cruder.
 
 With home-manager, where `style-agents` is this repo as a flake input or from `fetchFromGitHub`:
 

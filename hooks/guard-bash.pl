@@ -5,11 +5,13 @@ use warnings;
 use utf8;
 use FindBin;
 use lib "$FindBin::RealBin/lib";
-use Lint qw(read_input prose_hits conventional attribution_hit block signs_with_1password ssh_via_1password op_running OP_STOP);
+use Lint qw(read_input prose_hits conventional attribution_hit block signs_with_1password ssh_via_1password
+            op_running risky_paths secret_hits gitleaks_staged have_cmd git_lines
+            index_fingerprint review_file record_review last_review OP_STOP);
 
 my ($raw, $decode) = read_input();
 # Cheap pre-filter so unrelated Bash calls never pay for JSON decoding.
-exit 0 unless $raw =~ /git\s+(?:commit|tag|config|push|pull|fetch|clone)|gh\s+pr\s+(?:create|edit)|gpgsign|gpg-sign/;
+exit 0 unless $raw =~ /git\s+(?:status|diff|commit|tag|config|push|pull|fetch|clone)|gh\s+pr\s+(?:create|edit)|gpgsign|gpg-sign/;
 
 my $in  = $decode->();
 my $cmd = $in->{tool_input}{command} // '';
@@ -23,6 +25,32 @@ block('1password', '1Password is not running, so this commit cannot be signed.',
 
 block('1password', '1Password is not running, and SSH auth for this remote goes through its agent.', OP_STOP)
     if $cmd =~ /git\s+(?:push|pull|fetch|clone)\b/ && ssh_via_1password($cwd, $cmd) && !op_running();
+
+# Staging is not checked as it happens; the index is checked once, when the commit is attempted.
+# Looking at the index counts as reviewing it, so remember what was on screen at that moment.
+if ($cmd =~ /git\s+(?:status|diff\s+[^\n;&|]*--(?:cached|staged)|diff\s+HEAD)\b/) {
+    record_review(review_file($cwd, $in->{session_id}), index_fingerprint($cwd));
+}
+
+if ($cmd =~ /git\s+commit\b/ && $cmd !~ /--amend[^\n]*--no-edit/) {
+    my @staged = git_lines('-C', $cwd, 'diff', '--cached', '--name-only');
+    push @staged, git_lines('-C', $cwd, 'diff', '--name-only') if $cmd =~ /git\s+commit\s+(?:-\w*a|--all)\b/;
+    my @bad = risky_paths($cwd, @staged);
+    block('staged files', 'These staged paths should not be committed:', @bad,
+          'Unstage them (git restore --staged <path>), then commit.') if @bad;
+
+    my ($scanner, @secrets) = have_cmd('gitleaks')
+        ? ('gitleaks', gitleaks_staged($cwd))
+        : ('pattern match, gitleaks not installed', secret_hits(join '', git_lines('-C', $cwd, 'diff', '--cached', '-U0')));
+    block('secret', "The staged diff contains what looks like a secret, per $scanner:", @secrets,
+          'Do not commit it. Show the user these lines and ask what to do.') if @secrets;
+
+    my $now = index_fingerprint($cwd);
+    my $file = review_file($cwd, $in->{session_id});
+    block('unreviewed', 'The index changed since you last looked at it, so this commit would include files you have not seen.',
+          'Run git diff --cached, confirm it is exactly what you mean to commit, then commit again.')
+        if $now && last_review($file) ne $now;
+}
 
 my $QUOTED = qr/"((?:[^"\\]|\\.)*)"|'([^']*)'|(\S+)/s;
 

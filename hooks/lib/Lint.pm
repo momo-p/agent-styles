@@ -3,10 +3,13 @@ package Lint;
 use strict;
 use warnings;
 use utf8;
+use Digest::SHA ();
+use File::Path qw(make_path);
 use JSON::PP ();
 use Exporter 'import';
 our @EXPORT_OK = qw(read_input strip_code prose_hits conventional attribution_hit block
-                    signs_with_1password ssh_via_1password op_running OP_STOP);
+                    signs_with_1password ssh_via_1password op_running risky_paths secret_hits gitleaks_staged have_cmd git_lines
+                    index_fingerprint review_file record_review last_review OP_STOP);
 
 use constant OP_STOP => 'STOP. This is not a bug and not a git problem: git is waiting on 1Password '
     . '(signing or SSH key). Do not retry, do not disable signing, do not change git config. '
@@ -76,6 +79,102 @@ sub conventional {
 sub attribution_hit {
     my ($text) = @_;
     return $text =~ /co-authored-by:|generated with|claude\.ai\/code|🤖/i;
+}
+
+# Files that should not enter a commit, by name.
+my @RISKY_PATH = (
+    qr/(?:^|\/)\.env(?:\.|$)/i, qr/(?:^|\/)id_(?:rsa|dsa|ecdsa|ed25519)$/, qr/\.(?:pem|key|p12|pfx|keystore|jks)$/i,
+    qr/(?:^|\/)(?:credentials|secrets?|service-account.*)\.(?:json|ya?ml|toml)$/i, qr/(?:^|\/)\.(?:npmrc|pypirc|netrc|htpasswd)$/,
+    qr/(?:^|\/)settings\.local\.json$/, qr/(?:^|\/)(?:node_modules|target|dist|build|\.direnv|__pycache__|vendor)\//,
+    qr/(?:^|\/)result(?:-\w+)?$/, qr/\.(?:sqlite3?|db|dump|bak|log)$/i, qr/(?:^|\/)\.DS_Store$/,
+);
+
+# Secrets in the staged content itself.
+my @SECRET = (
+    [qr/-----BEGIN [A-Z ]*PRIVATE KEY-----/,      'private key block'],
+    [qr/\bAKIA[0-9A-Z]{16}\b/,                    'AWS access key id'],
+    [qr/\b(?:ghp|gho|ghu|ghs)_[A-Za-z0-9]{30,}/,  'GitHub token'],
+    [qr/\bgithub_pat_[A-Za-z0-9_]{30,}/,          'GitHub fine-grained token'],
+    [qr/\bsk-[A-Za-z0-9_-]{20,}/,                 'API secret key (sk-)'],
+    [qr/\bxox[abprs]-[A-Za-z0-9-]{10,}/,          'Slack token'],
+    [qr/\bAIza[0-9A-Za-z_-]{35}\b/,               'Google API key'],
+    [qr/\bey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/, 'JWT'],
+    [qr/(?:password|passwd|secret(?:[_-]?key)?|api[_-]?key|access[_-]?token|token)\s*[:=]\s*["'][^"'\s]{8,}["']/i,
+        'hardcoded credential'],
+);
+
+sub risky_paths {
+    my ($cwd, @paths) = @_;
+    my @bad;
+    for my $p (@paths) {
+        chomp $p;
+        next unless length $p;
+        push @bad, "$p (name)" and next if grep { $p =~ $_ } @RISKY_PATH;
+        my $abs = $p =~ m{^/} ? $p : "$cwd/$p";
+        my $size = -f $abs ? -s $abs : 0;
+        push @bad, sprintf('%s (%.1f MB)', $p, $size / 1e6) if $size > 1_000_000;
+    }
+    return @bad;
+}
+
+sub secret_hits {
+    my ($text) = @_;
+    my @hits;
+    for (@SECRET) { push @hits, $_->[1] if $text =~ $_->[0] }
+    my %seen;
+    return grep { !$seen{$_}++ } @hits;
+}
+
+sub have_cmd { my $c = shift; scalar grep { -x "$_/$c" } split /:/, $ENV{PATH} // '' }
+
+# Scans the staged diff with gitleaks, returning one line per finding.
+sub gitleaks_staged {
+    my ($cwd) = @_;
+    open my $saved, '>&', \*STDERR;
+    open STDERR, '>', '/dev/null';
+    my ($gl, $json);
+    if (open $gl, '-|', 'timeout', '30', 'gitleaks', 'git', '--staged', '--no-banner', '--redact',
+        '-f', 'json', '-r', '-', $cwd) {
+        local $/;
+        $json = <$gl> // '';
+        close $gl;
+    }
+    open STDERR, '>&', $saved;
+    my $found = eval { JSON::PP->new->decode($json // '[]') } || [];
+    return map { ($_->{RuleID} // 'secret') . ' in ' . ($_->{File} // '?') . ':' . ($_->{StartLine} // '?') } @$found;
+}
+
+# Identity of the current index: changes whenever staged paths or their contents change.
+sub index_fingerprint {
+    my ($cwd) = @_;
+    my $raw = join '', git_lines('-C', $cwd, 'diff', '--cached', '--raw');
+    return length $raw ? Digest::SHA::sha1_hex($raw) : '';
+}
+
+# Where the last reviewed fingerprint for this session and repo is remembered.
+sub review_file {
+    my ($cwd, $session) = @_;
+    my $root = join '', git_lines('-C', $cwd, 'rev-parse', '--show-toplevel');
+    chomp $root;
+    return unless length $root;
+    my $dir = ($ENV{XDG_CACHE_HOME} // "$ENV{HOME}/.cache") . '/style-agents';
+    make_path($dir);
+    (my $key = "$root-" . ($session // 'nosession')) =~ s/[^A-Za-z0-9]+/-/g;
+    return "$dir/$key";
+}
+
+sub record_review {
+    my ($file, $fingerprint) = @_;
+    return unless $file;
+    open my $fh, '>', $file or return;
+    print {$fh} $fingerprint;
+}
+
+sub last_review {
+    my ($file) = @_;
+    return '' unless $file && open my $fh, '<', $file;
+    local $/;
+    return <$fh> // '';
 }
 
 sub signs_with_1password {

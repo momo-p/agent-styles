@@ -207,9 +207,10 @@ Hooks enforce the commit, PR, and prose rules. A hook message means fix the text
 A commit, push, or pull that fails or hangs on signing or SSH auth is waiting on the user (1Password locked, closed, or showing an approval prompt). Stop and ask the user to unlock or approve, then wait. Never retry in a loop, skip signing, or change git config to get past it.
 
 1. Finish and verify — check loop green.
-2. Stage only the files you changed — `git add <paths>`, never `-A`. Never stage secrets or generated artifacts.
-3. Summarize and propose a message.
-4. Wait for approval. Approval does not carry over to the next slice.
+2. Look before you stage: `git status --short` for what is there, and `git diff` for what changed. Stage only the files you changed, by path — `git add <paths>`, never `-A`. Never stage secrets, credentials, build output, or generated artifacts.
+3. Read the staged diff (`git diff --cached`) before proposing the commit, and say in one line what is in it. A file you did not read does not go in.
+4. Summarize and propose a message.
+5. Wait for approval. Approval does not carry over to the next slice.
 
 Message: **one conventional subject line**, `<type>(<scope>): <what changed>`, as a noun phrase. No body, no story, no argument.
 
