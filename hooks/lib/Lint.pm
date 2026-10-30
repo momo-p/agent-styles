@@ -354,10 +354,70 @@ my %COMMENT = (
     dash  => qr/\.(?:lua|sql|hs|elm|moon)$/i,
 );
 
+# The ast-grep language and comment node kinds for each extension it parses. Kind names
+# differ per grammar, and a kind the grammar lacks fails the whole rule.
+my %AST = (
+    (map { $_ => ['c', 'comment'] } qw(c h)),
+    (map { $_ => ['cpp', 'comment'] } qw(cc cpp hpp cxx)),
+    (map { $_ => ['javascript', 'comment'] } qw(js mjs cjs jsx)),
+    (map { $_ => ['typescript', 'comment'] } qw(ts mts cts)),
+    tsx => ['tsx', 'comment'],     cs    => ['csharp', 'comment'],     go  => ['go', 'comment'],
+    php => ['php', 'comment'],     rb    => ['ruby', 'comment'],       sh  => ['bash', 'comment'],
+    bash => ['bash', 'comment'],   nix   => ['nix', 'comment'],        tf  => ['hcl', 'comment'],
+    lua => ['lua', 'comment'],     hs    => ['haskell', 'comment'],    yml => ['yaml', 'comment'],
+    yaml => ['yaml', 'comment'],   java  => ['java', qw(line_comment block_comment)],
+    rs  => ['rust', qw(line_comment block_comment)],                   scala => ['scala', qw(comment block_comment)],
+    kt  => ['kotlin', qw(line_comment multiline_comment)],             kts => ['kotlin', qw(line_comment multiline_comment)],
+    swift => ['swift', qw(comment multiline_comment)],                 dart => ['dart', qw(comment block_comment)],
+    py  => ['python', 'comment', 'docstring'],                         pyi => ['python', 'comment', 'docstring'],
+);
+
+# Comment nodes of $text parsed by ast-grep, markers stripped. Undef when ast-grep is not
+# installed, does not parse this file type, or fails, so the caller falls back to regexes.
+sub _ast_comments {
+    my ($path, $text) = @_;
+    my ($ext) = $path =~ /\.([^.\/]+)$/ or return;
+    my ($lang, @kinds) = @{ $AST{ lc $ext } // return };
+    return unless have_cmd('ast-grep');
+
+    my @any = map { $_ eq 'docstring' ? '{kind: string, inside: {kind: expression_statement}}' : "{kind: $_}" } @kinds;
+    require File::Temp;
+    my $tmp = File::Temp->new(SUFFIX => ".$ext");
+    binmode $tmp, ':utf8';
+    print {$tmp} $text;
+    close $tmp;
+
+    open my $saved, '>&', \*STDERR;
+    local $/ = "\n";
+    open STDERR, '>', '/dev/null';
+    my ($ag, @lines);
+    @lines = <$ag> if open $ag, '-|', 'timeout', '10', 'ast-grep', 'scan', '--json=stream',
+        '--inline-rules', "id: comment\nlanguage: $lang\nrule: {any: [" . join(', ', @any) . "]}", $tmp->filename;
+    my $ok = $ag && close $ag;
+    open STDERR, '>&', $saved;
+    return unless $ok;
+
+    my $json = JSON::PP->new->utf8;
+    my @out;
+    for (@lines) {
+        my $c = eval { $json->decode($_)->{text} } // next;
+        $c =~ s{^/\*+!?|\*+/$}{}g;
+        $c =~ s/^--\[=*\[|\]=*\]$|^\{-|-\}$//g;
+        $c =~ s/^[rRbBuU]*("""|'''|["'])(.*)\1$/$2/s;
+        $c =~ s{^[ \t]*(?://[/!]?|#+|--+|\*+(?!/))[ \t]?}{}mg;
+        $c =~ s/\s+\z//;
+        push @out, $c;
+    }
+    return join "\n", @out;
+}
+
 # The comments and doc comments of a source file: the prose a reader meets inside code.
-# String bodies are blanked first so a URL or a quoted "#" never reads as a comment.
+# ast-grep reads them from the syntax tree when installed. The regex fallback blanks string
+# bodies first so a URL or a quoted "#" never reads as a comment.
 sub comment_text {
     my ($path, $text) = @_;
+    my $ast = _ast_comments($path, $text);
+    return join "\n", grep { !/^!/ } split /\n/, $ast if defined $ast;
     $text =~ s/(["'])(?:\\.|(?!\1)[^\n])*\1/""/g;
     my @out;
     if ($path =~ $COMMENT{slash}) {
