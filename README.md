@@ -40,6 +40,8 @@ The prose lint reads `.md`, `.txt`, `.rst` and `.adoc` whole, plus the comments 
 
 To score text without editing it, run `perl ~/.claude/hooks/score.pl <file>...`, or pipe text into it with no arguments to score it as Markdown. It applies the same checks and budgets to the whole file and prints each tell's count next to what the budget allows. It exits 1 when anything is over.
 
+When the agent finishes a turn, `stop-lint.pl` runs the same lint over its final reply and over every file the working tree changed against `HEAD`, judged on the lines added since then, untracked files whole. Hits keep the turn going once with the list, so the agent fixes the files and resends only the corrected sentences of the reply. On that second stop Claude Code sets `stop_hook_active` and the hook lets it through, so it can never loop. A reply shorter than eight prose lines gets only the word check.
+
 After a Bash call fails, `op-failure.pl` checks whether it was a git command that hit a signing error, an SSH key error, or a timeout. If so, it tells the agent to stop and ask you to unlock or approve 1Password, instead of retrying or deciding git is broken.
 
 Each hook takes about 20 ms, plus the formatter's own time. Prettier is the slow one at about 100 ms because Node has to start.

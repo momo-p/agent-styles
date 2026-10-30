@@ -53,6 +53,11 @@
         "matcher": "Write|Edit|MultiEdit",
         "hooks": [{ "type": "command", "command": "perl \"$HOME/.claude/hooks/post-edit.pl\"", "timeout": 30 }]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [{ "type": "command", "command": "perl \"$HOME/.claude/hooks/stop-lint.pl\"", "timeout": 30 }]
+      }
     ]
   }
 }
