@@ -13,6 +13,7 @@ My global setup for Claude Code: the instructions every session loads, a skill f
 | `settings.json` | Permissions and hook wiring | merged into `~/.claude/settings.json` |
 | `hooks/` | Perl scripts that Claude Code runs around tool calls | `~/.claude/hooks` |
 | `skills/humanizer/` | A copy of [blader/humanizer](https://github.com/blader/humanizer) at `9862685` | `~/.claude/skills/humanizer` |
+| `skills/slices/` | Plans a task as numbered slices and runs the independent ones on subagents | `~/.claude/skills/slices` |
 
 A rule in `AGENTS.md` only works if the model follows it. A hook runs outside the model, so the check happens every time, and it costs no tokens unless it fires. When a rule can be checked by a script, it lives in a hook.
 
@@ -42,6 +43,8 @@ To score text without editing it, run `perl ~/.claude/hooks/score.pl <file>...`,
 
 When the agent finishes a turn, `stop-lint.pl` runs the same lint over its final reply and over every file the working tree changed against `HEAD`, judged on the lines added since then, untracked files whole. Hits keep the turn going once with the list, so the agent fixes the files and resends only the corrected sentences of the reply. On that second stop Claude Code sets `stop_hook_active` and the hook lets it through, so it can never loop. A reply shorter than eight prose lines gets only the word check.
 
+`agent-cap.pl` caps how many subagents run at once in a session: 3 by default, or `STYLE_AGENTS_MAX_SUBAGENTS`. It reserves a slot before each `Agent` call and blocks the call when all slots are taken. `SubagentStart` and `SubagentStop` hand the slot to the agent and free it again. A reservation that never starts expires after two minutes, and a running agent after two hours, so a missed stop event can only hold a slot for that long. The `slices` skill tells the orchestrator what to do when the cap blocks it.
+
 After a Bash call fails, `op-failure.pl` checks whether it was a git command that hit a signing error, an SSH key error, or a timeout. If so, it tells the agent to stop and ask you to unlock or approve 1Password, instead of retrying or deciding git is broken.
 
 Each hook takes about 20 ms, plus the formatter's own time. Prettier is the slow one at about 100 ms because Node has to start.
@@ -70,6 +73,7 @@ With home-manager, where `style-agents` is this repo as a flake input or from `f
 home.file.".claude/CLAUDE.md".source = "${style-agents}/AGENTS.md";
 home.file.".claude/hooks".source = "${style-agents}/hooks";
 home.file.".claude/skills/humanizer".source = "${style-agents}/skills/humanizer";
+home.file.".claude/skills/slices".source = "${style-agents}/skills/slices";
 # Merge into the settings you already generate:
 # lib.recursiveUpdate yourSettings (builtins.fromJSON (builtins.readFile "${style-agents}/settings.json"))
 ```
@@ -82,6 +86,7 @@ Without nix, symlink the same paths and copy the `permissions` and `hooks` block
 ln -s ~/Codes/style-agents/AGENTS.md ~/.claude/CLAUDE.md
 ln -s ~/Codes/style-agents/hooks ~/.claude/hooks
 ln -s ~/Codes/style-agents/skills/humanizer ~/.claude/skills/humanizer
+ln -s ~/Codes/style-agents/skills/slices ~/.claude/skills/slices
 ```
 
 ## Tuning

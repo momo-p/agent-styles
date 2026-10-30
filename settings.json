@@ -40,6 +40,20 @@
       {
         "matcher": "Bash",
         "hooks": [{ "type": "command", "command": "perl \"$HOME/.claude/hooks/guard-bash.pl\"", "timeout": 5 }]
+      },
+      {
+        "matcher": "Agent",
+        "hooks": [{ "type": "command", "command": "perl \"$HOME/.claude/hooks/agent-cap.pl\"", "timeout": 5 }]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [{ "type": "command", "command": "perl \"$HOME/.claude/hooks/agent-cap.pl\"", "timeout": 5 }]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [{ "type": "command", "command": "perl \"$HOME/.claude/hooks/agent-cap.pl\"", "timeout": 5 }]
       }
     ],
     "PostToolUseFailure": [
