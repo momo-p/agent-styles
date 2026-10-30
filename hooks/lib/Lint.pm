@@ -4,10 +4,11 @@ use strict;
 use warnings;
 use utf8;
 use Digest::SHA ();
+use File::Basename ();
 use File::Path qw(make_path);
 use JSON::PP ();
 use Exporter 'import';
-our @EXPORT_OK = qw(read_input strip_code prose_hits structure_hits prose_text comment_text conventional attribution_hit block
+our @EXPORT_OK = qw(read_input strip_code prose_hits structure_hits structure_report lint_view prose_text comment_text conventional attribution_hit block
                     signs_with_1password ssh_via_1password op_running risky_paths secret_hits gitleaks_staged have_cmd git_lines
                     index_fingerprint review_file record_review last_review OP_STOP);
 
@@ -313,21 +314,37 @@ my %BUDGET = (
 # for text that is short by rule, such as a PR body capped at ten lines.
 sub structure_hits {
     my ($whole, $added, %opt) = @_;
-    my %w = _counts($whole);
-    return () if $w{lines} < ($opt{min_lines} // 8);
-    my %a = defined $added ? _counts($added) : %w;
+    my ($lines, @rows) = structure_report($whole, %opt);
+    my %a = _counts($added // $whole);
+    return map {
+        $_->{key} eq 'bold'
+            ? sprintf('bold lead-in labels on %d of %d bullets', $_->{count}, $_->{bullets})
+            : sprintf('%s x%d in %d lines, over the 1 per %d budget', $_->{name}, $_->{count}, $lines, $_->{per})
+    } grep { $_->{over} && $a{ $_->{key} } } @rows;
+}
 
-    my @hits;
+# Every structural tell in $text against its budget: the prose line count, then one row
+# per tell with the most it may carry before it is over. Text under min_lines is never over.
+sub structure_report {
+    my ($text, %opt) = @_;
+    my %n     = _counts($text);
+    my $short = $n{lines} < ($opt{min_lines} // 8);
+    my @rows;
     for my $key (sort keys %BUDGET) {
         next if $opt{"no_$key"};
         my ($name, $min, $per) = @{ $BUDGET{$key} };
-        next unless $a{$key} && $w{$key} >= $min && $w{$key} * $per > $w{lines};
-        push @hits, sprintf '%s x%d in %d lines, over the 1 per %d budget',
-            $name, $w{$key}, $w{lines}, $per;
+        my $allowed = int($n{lines} / $per);
+        $allowed = $min - 1 if $allowed < $min - 1;
+        push @rows, { key => $key, name => $name, per => $per, count => $n{$key}, allowed => $allowed,
+                      over => !$short && $n{$key} > $allowed };
     }
-    push @hits, sprintf 'bold lead-in labels on %d of %d bullets', $w{bold}, $w{bullets}
-        if !$opt{no_bold} && $a{bold} && $w{bold} >= 5 && $w{bold} * 5 > $w{bullets} * 2;
-    return @hits;
+    unless ($opt{no_bold}) {
+        my $allowed = int($n{bullets} * 2 / 5);
+        $allowed = 4 if $allowed < 4;
+        push @rows, { key => 'bold', name => 'bold lead-in labels', count => $n{bold}, allowed => $allowed,
+                      bullets => $n{bullets}, over => !$short && $n{bold} > $allowed };
+    }
+    return ($n{lines}, @rows);
 }
 
 # Which comment syntax a source file uses. Anything unlisted has no prose to lint.
@@ -356,6 +373,17 @@ sub comment_text {
     }
     else { return }
     return join "\n", grep { !/^!/ } @out;
+}
+
+# The prose of $path a reader meets, and the budget options for it: a prose file whole, a
+# source file's comments without the closer and bold budgets. Empty when there is nothing
+# to lint: the instruction files quote the tells they ban, and any file can carry the opt-out marker.
+sub lint_view {
+    my ($path, $text) = @_;
+    return if File::Basename::basename($path) =~ /^(?:AGENTS|CLAUDE|GEMINI)\.md$/i || $text =~ /prose-lint:\s*off/;
+    return ($text) if $path =~ /\.(?:md|mdx|markdown|txt|rst|adoc)$/i;
+    my $comments = comment_text($path, $text) // return;
+    return ($comments, no_closers => 1, no_bold => 1);
 }
 
 1;

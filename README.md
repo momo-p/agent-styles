@@ -38,6 +38,8 @@ After each file edit, `post-edit.pl` formats the file and lints its prose. `gofm
 
 The prose lint reads `.md`, `.txt`, `.rst` and `.adoc` whole, plus the comments and doc comments of source files in the usual languages. Stock AI words fire on one sighting in the text the edit added. The structural tells (X-not-Y contrasts, one-line closers, three-item lists, em dashes, bold lead-in bullets) are counted over the whole file against a budget per line of prose, and raised only when the edit fed them, so a document can't drift past a budget one small edit at a time. Code blocks, tables, headings and quotes don't count toward anything. Comments get the word, contrast, list and dash budgets but not the closer one, since a one-line comment is a short standalone sentence by design. `AGENTS.md` and its siblings are skipped because they quote the tells they ban, and any other file opts out with a `prose-lint: off` comment.
 
+To score text without editing it, run `perl ~/.claude/hooks/score.pl <file>...`, or pipe text into it with no arguments to score it as Markdown. It applies the same checks and budgets to the whole file and prints each tell's count next to what the budget allows. It exits 1 when anything is over.
+
 After a Bash call fails, `op-failure.pl` checks whether it was a git command that hit a signing error, an SSH key error, or a timeout. If so, it tells the agent to stop and ask you to unlock or approve 1Password, instead of retrying or deciding git is broken.
 
 Each hook takes about 20 ms, plus the formatter's own time. Prettier is the slow one at about 100 ms because Node has to start.

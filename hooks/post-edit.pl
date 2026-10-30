@@ -4,10 +4,10 @@
 use strict;
 use warnings;
 use utf8;
-use File::Basename qw(basename dirname);
+use File::Basename qw(dirname);
 use FindBin;
 use lib "$FindBin::RealBin/lib";
-use Lint qw(read_input prose_hits structure_hits comment_text block);
+use Lint qw(read_input prose_hits structure_hits lint_view block);
 
 my ($raw, $decode) = read_input();
 my $in   = $decode->();
@@ -98,29 +98,13 @@ if (my $fmt = formatter()) {
 }
 
 # Prose lint: every text a reader meets, including the comments inside source files.
-# The instruction files are exempt because they quote the tells they ban; any other file
-# opts out with a "prose-lint: off" comment.
-my $base = basename($file);
-exit 0 if $base =~ /^(?:AGENTS|CLAUDE|GEMINI)\.md$/i;
-
-my $whole = do { open my $fh, '<:utf8', $file or exit 0; local $/; <$fh> // '' };
-exit 0 if $whole =~ /prose-lint:\s*off/;
+my $raw_whole = do { open my $fh, '<:utf8', $file or exit 0; local $/; <$fh> // '' };
+my ($whole, %opt) = lint_view($file, $raw_whole) or exit 0;
 
 my $added = join "\n", grep { defined } $ti->{content}, $ti->{new_string},
     map { $_->{new_string} } @{ $ti->{edits} // [] };
-exit 0 unless length $added;
-
-# Outside a prose file only the comments are read, and the closer and bold-bullet budgets
-# are dropped: a one-line comment is a short standalone sentence by design.
-my %opt;
-unless ($file =~ /\.(?:md|mdx|markdown|txt|rst|adoc)$/i) {
-    my $comments = comment_text($file, $whole);
-    exit 0 unless defined $comments;
-    $whole = $comments;
-    $added = comment_text($file, $added) // '';
-    %opt   = (no_closers => 1, no_bold => 1);
-}
-exit 0 unless $added =~ /\S/;
+($added) = lint_view($file, $added);
+exit 0 unless defined $added && $added =~ /\S/;
 
 # Vocabulary tells fire on one sighting in what this edit added; structural tells are a
 # rate over the whole file, raised only where the edit fed them.
