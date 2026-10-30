@@ -152,7 +152,7 @@ sub index_fingerprint {
     return length $raw ? Digest::SHA::sha1_hex($raw) : '';
 }
 
-# Where the last reviewed fingerprint for this session and repo is remembered.
+# The file that remembers the last reviewed fingerprint for this session and repo.
 sub review_file {
     my ($cwd, $session) = @_;
     my $root = join '', git_lines('-C', $cwd, 'rev-parse', '--show-toplevel');
@@ -224,9 +224,9 @@ sub block {
 }
 
 
-# Text a reader actually sees: fenced blocks, inline code, links, quotes, tables and
-# headings removed, line and paragraph structure kept so a closer can be found at the end
-# of its block. Inline code becomes \x01 so a terse line of API names is not read as prose.
+# Text a reader actually sees, without fenced blocks, links, quotes, tables and headings.
+# Line and paragraph breaks stay, so the closer check can find the end of each block.
+# Inline code becomes \x01, so the checks skip a terse line of API names.
 sub prose_text {
     my ($text) = @_;
     $text =~ s/^[ \t]*(```|~~~).*?^[ \t]*\1[^\n]*$/\n/gms;
@@ -278,6 +278,32 @@ sub _closers {
     return $n;
 }
 
+# Passive voice, which STE asks code comments to avoid. It matches a form of "be", an
+# optional adverb or "not", then a regular past participle or a common irregular one.
+my $IRREGULAR = join '|', qw(built done found given kept known left made meant met put read run seen sent set shown
+    taken written held chosen drawn driven broken spent split told thought brought caught taught hidden begun cut
+    got gotten hit lost paid said sold shut understood bound fed led thrown);
+my $PASSIVE = qr/\b(?:is|are|was|were|be|been|being)\s+(?:(?:not|\w+ly)\s+)?(?:\w+ed|$IRREGULAR)\b/i;
+
+# Sentences longer than $max words. A wrapped line joins the sentence it continues. A line
+# starts a new sentence when it opens with a capital or follows a stop or colon.
+sub _long_sentences {
+    my ($text, $max) = @_;
+    my (@paras, $cur);
+    for my $line (split /\n/, $text) {
+        if ($line !~ /\S/) { push @paras, $cur if defined $cur; undef $cur; next }
+        if (!defined $cur || $cur =~ /[.!?:]\s*$/ || $line =~ /^\s*[A-Z]/) { push @paras, $cur if defined $cur; $cur = $line; next }
+        $cur .= " $line";
+    }
+    push @paras, $cur if defined $cur;
+    my $n = 0;
+    for my $sentence (map { split /(?<=[.!?])\s+/ } @paras) {
+        my $words = () = $sentence =~ /[\w'-]+/g;
+        $n++ if $words > $max;
+    }
+    return $n;
+}
+
 # Raw counts of every structural tell, plus the prose volume they are judged against.
 sub _counts {
     my ($text) = @_;
@@ -295,12 +321,14 @@ sub _counts {
     $n{closers}    = _closers($p);
     $n{bullets}    = () = $p =~ /^\s*(?:[-*+]|\d+[.)])\s+/mg;
     $n{bold}       = () = $p =~ /^\s*(?:[-*+]|\d+[.)])\s+\*\*[^*\n]+\*\*/mg;
+    $n{passive}    = () = $p =~ /$PASSIVE/g;
+    $n{long}       = _long_sentences($p, 25);
     return %n;
 }
 
 # How much of each tell a document may carry: [smallest count worth reporting, one per N
 # prose lines]. A single contrast is good technical writing; one in every paragraph is the
-# tic, so these fire on rate and scale with the document instead of on one sighting.
+# tic. These budgets fire on rate and scale with the document.
 my %BUDGET = (
     antithesis => ['antithesis (X, not Y)', 3, 40],
     closers    => ['one-line closers',      4, 25],
@@ -308,10 +336,17 @@ my %BUDGET = (
     dash       => ['em/en dash',            2, 80],
 );
 
-# Structural tells in $whole, reported only where $added fed them, so untouched prose
-# stays quiet. %opt drops the checks a kind of text is exempt from (code comments are
-# short single sentences by design, so closers mean nothing there) and lowers min_lines
-# for text that is short by rule, such as a PR body capped at ten lines.
+# Simplified Technical English rules, checked only with the ste option (code comments):
+# STE caps descriptive sentences at 25 words and prefers the active voice.
+my %STE = (
+    long    => ['sentences over 25 words', 2, 30],
+    passive => ['passive voice',           3, 20],
+);
+
+# Structural tells in $whole that $added fed, so untouched prose stays quiet. %opt turns
+# off the checks that do not apply to a kind of text. Closers mean nothing in code
+# comments, which are short single sentences by design. min_lines lowers the floor for
+# text that is short by rule, such as a PR body capped at ten lines.
 sub structure_hits {
     my ($whole, $added, %opt) = @_;
     my ($lines, @rows) = structure_report($whole, %opt);
@@ -323,16 +358,16 @@ sub structure_hits {
     } grep { $_->{over} && $a{ $_->{key} } } @rows;
 }
 
-# Every structural tell in $text against its budget: the prose line count, then one row
-# per tell with the most it may carry before it is over. Text under min_lines is never over.
+# Every structural tell in $text against its budget. Returns the prose line count, then
+# one row per tell with the most it may carry. Text under min_lines is never over.
 sub structure_report {
     my ($text, %opt) = @_;
     my %n     = _counts($text);
     my $short = $n{lines} < ($opt{min_lines} // 8);
     my @rows;
-    for my $key (sort keys %BUDGET) {
+    for my $key (sort(keys %BUDGET), $opt{ste} ? sort(keys %STE) : ()) {
         next if $opt{"no_$key"};
-        my ($name, $min, $per) = @{ $BUDGET{$key} };
+        my ($name, $min, $per) = @{ $BUDGET{$key} // $STE{$key} };
         my $allowed = int($n{lines} / $per);
         $allowed = $min - 1 if $allowed < $min - 1;
         push @rows, { key => $key, name => $name, per => $per, count => $n{$key}, allowed => $allowed,
@@ -426,7 +461,7 @@ sub comment_text {
     }
     elsif ($path =~ $COMMENT{hash}) {
         push @out, $1 while $text =~ /(?:^|\s)#+[ \t]?([^\n]*)/mg;
-        push @out, $1 while $text =~ /"""(.*?)"""/gs;
+        push @out, $1 while $path =~ /\.pyi?$/ && $text =~ /"""(.*?)"""/gs;
     }
     elsif ($path =~ $COMMENT{dash}) {
         push @out, $1 while $text =~ /(?<![-\w])--[ \t]?([^\n]*)/g;
@@ -435,15 +470,16 @@ sub comment_text {
     return join "\n", grep { !/^!/ } @out;
 }
 
-# The prose of $path a reader meets, and the budget options for it: a prose file whole, a
-# source file's comments without the closer and bold budgets. Empty when there is nothing
-# to lint: the instruction files quote the tells they ban, and any file can carry the opt-out marker.
+# The prose of $path a reader meets, and the budget options for it. A prose file counts
+# whole. A source file counts by its comments, with the STE budgets in place of the closer
+# and bold ones. Returns empty for the instruction files, which quote the tells they ban,
+# and for any file with the opt-out marker.
 sub lint_view {
     my ($path, $text) = @_;
     return if File::Basename::basename($path) =~ /^(?:AGENTS|CLAUDE|GEMINI)\.md$/i || $text =~ /prose-lint:\s*off/;
     return ($text) if $path =~ /\.(?:md|mdx|markdown|txt|rst|adoc)$/i;
     my $comments = comment_text($path, $text) // return;
-    return ($comments, no_closers => 1, no_bold => 1);
+    return ($comments, no_closers => 1, no_bold => 1, ste => 1);
 }
 
 1;

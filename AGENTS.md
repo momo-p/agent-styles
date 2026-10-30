@@ -150,6 +150,7 @@ A name is a contract promising exactly what the function does.
 4. Comment only the non-obvious *why* — ordering constraints, atomicity subtleties.
 5. Never restate signatures, fields, or boilerplate.
 6. No commented-out code; history keeps it.
+7. Write comments in Simplified Technical English: sentences of 25 words or fewer, active voice.
 
 ### Line breaks
 - **No manual line breaks inside a paragraph.** Never break mid-sentence to keep lines short — in Markdown, docs, PR text, and comments.
