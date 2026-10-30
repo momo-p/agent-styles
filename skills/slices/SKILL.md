@@ -21,6 +21,12 @@ The orchestrator plans, dispatches, reviews and merges. Subagents do one slice e
 
 - Do the dependent and small slices yourself. Send only the independent, large ones to subagents.
 - Start each subagent with `isolation: "worktree"`, so parallel edits never touch the same checkout.
+- Pick the model per slice with the Agent tool's `model` parameter, and name the choice and its reason in the plan:
+  - `haiku` for mechanical slices with an exact recipe: a scripted rename, a file search, a format or import fix.
+  - `sonnet` for ordinary implementation against a clear spec and existing tests.
+  - `opus` for design, debugging from symptoms, concurrency, security, or a slice a smaller model could not finish.
+  - Leave `model` out to inherit this session's model. A `fork` subagent always inherits it and ignores `model`.
+- Escalate on failure: when a subagent's checks fail twice, rerun the slice one model up or take it yourself.
 - The `agent-cap` hook blocks any start past the session cap (`STYLE_AGENTS_MAX_SUBAGENTS`, default 3). When it blocks, wait for a subagent to finish or do the slice yourself. Do not retry in a loop.
 - Give every subagent a prompt that stands alone:
   - the goal of the slice and the files it may change
