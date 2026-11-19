@@ -161,6 +161,7 @@ A name is a contract promising exactly what the function does.
 ### Writing
 Applies to all text a person reads: replies, code comments, doc comments, commit messages, PR bodies, docs. Compact form of the `humanizer` skill.
 
+- Write for the reader you have: the user or a teammate who knows the project and the conversation so far. Skip what the project is, how its parts fit, why existing code exists, and anything already said. Name what is needed and what is left out on purpose.
 - State the point. No "not X but Y" contrasts, no staged openers ("Let's dive in", "Here's the thing", "Honestly?"). Keep a contrast only when the negative half corrects a belief the reader holds: at most one per 40 lines of prose.
 - No closer that repeats the point, no dramatic fragments, no sayings that sound deep ("At its core…"). A short sentence ending a paragraph has to carry a new fact: at most one per 25 lines of prose.
 - Don't argue with objections or reject options nobody raised.
@@ -223,7 +224,7 @@ Message: **one conventional subject line**, `<type>(<scope>): <what changed>`, a
 
 ### Pull requests
 - Title: one conventional subject line.
-- Body: **10 lines max.** No headings, no code blocks, at most 5 one-line bullets. Say only what the diff cannot. No test-name lists. Mention verification only if something is off. At most 2 one-line concerns.
+- Body: **10 lines max.** No headings, no code blocks, at most 5 one-line bullets. The reader is a reviewer who knows the codebase: no project intro, no tour of existing code. Say only what the diff cannot: what the change needs, and what it leaves out on purpose. No test-name lists. Mention verification only if something is off. At most 2 one-line concerns.
 - Never open a PR unprompted — propose it and wait.
 
 ### No attribution, anywhere
